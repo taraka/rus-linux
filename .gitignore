@@ -1,0 +1,4 @@
+build
+qemu.log
+kernel/initrd.cpio.gz
+/target
