@@ -1,11 +1,10 @@
-use libc::{geteuid, getpwuid};
 use nix::sys::wait::WaitPidFlag;
 use nix::unistd::{execve, fork, ForkResult, Uid, User};
+use std::env;
 use std::ffi::CString;
 use std::fs::metadata;
 use std::io::{self, BufRead, Write};
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 struct Command {
@@ -26,9 +25,7 @@ fn main() {
 }
 
 fn init() -> Environment {
-
     let user = User::from_uid(Uid::current()).unwrap().unwrap();
-
 
     update_pwd(&user.dir);
 
