@@ -12,7 +12,7 @@ EOF
 
 # Build user-space
 cargo build --release --target x86_64-unknown-linux-musl --bins
-cp target/x86_64-unknown-linux-musl/release/{sh,ls} "$ROOT"/bin/
+cp target/x86_64-unknown-linux-musl/release/{sh,ls,cat} "$ROOT"/bin/
 #need to make a proper init at some point the shell will do for now
 cp target/x86_64-unknown-linux-musl/release/sh "$ROOT"/init
 chmod a+x "$ROOT"/bin/*
