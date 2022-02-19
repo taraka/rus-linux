@@ -1,9 +1,11 @@
 use libc::{geteuid, getpwuid};
 use nix::sys::wait::WaitPidFlag;
-use nix::unistd::{execve, fork, ForkResult};
+use nix::unistd::{execve, fork, ForkResult, Uid, User};
 use std::ffi::CString;
 use std::fs::metadata;
 use std::io::{self, BufRead, Write};
+use std::env;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 struct Command {
@@ -12,9 +14,9 @@ struct Command {
 }
 
 struct Environment {
-    pwd: String,
+    pwd: PathBuf,
     user: String,
-    home: String,
+    home: PathBuf,
     path: String,
 }
 
@@ -24,27 +26,22 @@ fn main() {
 }
 
 fn init() -> Environment {
-    let home_cstr: CString;
 
-    unsafe {
-        let euid = geteuid();
-        let passwd = getpwuid(euid as u32);
+    let user = User::from_uid(Uid::current()).unwrap().unwrap();
 
-        if passwd.is_null() {
-            panic!("No passwd entry found for user ({})", euid);
-        }
 
-        home_cstr = CString::from_raw((*passwd).pw_dir);
-    }
-
-    let home = home_cstr.into_string().unwrap();
+    update_pwd(&user.dir);
 
     Environment {
-        pwd: home.clone(),
-        user: String::from("root"),
-        home: home,
+        pwd: user.dir.clone(),
+        user: user.name.clone(),
+        home: user.dir,
         path: String::from("/bin:/usr/bin"),
     }
+}
+
+fn update_pwd(path: &PathBuf) {
+    env::set_current_dir(path).unwrap();
 }
 
 fn repl(mut env: Environment) {
@@ -62,7 +59,7 @@ fn repl(mut env: Environment) {
 }
 
 fn print_prompt(env: &Environment) {
-    print!("{}$ ", env.pwd);
+    print!("{}$ ", env.pwd.to_str().unwrap());
     io::stdout().flush().unwrap();
 }
 
@@ -105,8 +102,8 @@ fn try_exec(command: Command, env: &Environment) {
 
 fn get_environment_for_exec(env: &Environment) -> Vec<CString> {
     vec![
-        "PWD=".to_owned() + &env.pwd,
-        "HOME=".to_owned() + &env.home,
+        "PWD=".to_owned() + &env.pwd.to_str().unwrap(),
+        "HOME=".to_owned() + &env.home.to_str().unwrap(),
         "USER=".to_owned() + &env.user,
         "PATH=".to_owned() + &env.path,
     ]
@@ -120,6 +117,7 @@ fn fork_exec(path: String, command: Command, env: &Environment) {
     let argv_c: Vec<CString> = command
         .args
         .iter()
+        .filter(|s| !s.is_empty())
         .map(|a| CString::new(a.clone()).unwrap())
         .collect();
     let env_c = get_environment_for_exec(env);
@@ -131,6 +129,8 @@ fn fork_exec(path: String, command: Command, env: &Environment) {
                     .expect("Error executing waitpid");
             }
             Ok(ForkResult::Child) => {
+                println!("{:?} {:?} {:?}", &path_c, &argv_c[..], &env_c[..]);
+
                 execve(&path_c, &argv_c[..], &env_c[..]).expect("evecve failed");
             }
             Err(e) => eprintln!("Fork failed: {}", e),
@@ -139,15 +139,21 @@ fn fork_exec(path: String, command: Command, env: &Environment) {
 }
 
 fn run_pwd(_command: Command, env: &Environment) {
-    println!("{}", env.pwd);
+    println!("{}", env.pwd.to_str().unwrap());
 }
 
 fn run_cd(command: Command, env: &mut Environment) {
-    let path = command.args.get(1).unwrap_or(&env.home).clone();
+    let path = if let Some(p) = command.args.get(1) {
+        p
+    } else {
+        env.home.to_str().unwrap()
+    };
+
     match metadata(&path) {
         Ok(md) => {
             if md.is_dir() {
-                env.pwd = path;
+                env.pwd = PathBuf::from(path);
+                update_pwd(&env.pwd);
             } else {
                 eprintln!("{} is not a directory!", path);
             }
