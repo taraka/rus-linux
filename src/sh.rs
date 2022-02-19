@@ -1,9 +1,9 @@
-use std::io::{self, BufRead, Write};
-use std::fs::metadata;
+use libc::{geteuid, getpwuid};
+use nix::sys::wait::WaitPidFlag;
 use nix::unistd::{execve, fork, ForkResult};
-use nix::sys::wait::{waitpid, WaitPidFlag};
-use libc::{getpwuid, geteuid};
 use std::ffi::CString;
+use std::fs::metadata;
+use std::io::{self, BufRead, Write};
 
 #[derive(Debug)]
 struct Command {
@@ -24,7 +24,6 @@ fn main() {
 }
 
 fn init() -> Environment {
-
     let home_cstr: CString;
 
     unsafe {
@@ -44,29 +43,26 @@ fn init() -> Environment {
         pwd: home.clone(),
         user: String::from("root"),
         home: home,
-        path: String::from("/bin"),
+        path: String::from("/bin:/usr/bin"),
     }
 }
 
 fn repl(mut env: Environment) {
-
     print_prompt(&env);
     for input_result in io::stdin().lock().lines() {
-        
         let input = match input_result {
-            Ok(i) => i ,
+            Ok(i) => i,
             Err(err) => panic!("Unable to read stdin: {}", err),
         };
 
         let command = parse_input(input);
         run_command(command, &mut env);
         print_prompt(&env);
-
     }
 }
 
 fn print_prompt(env: &Environment) {
-    print!("{}# ", env.pwd);
+    print!("{}$ ", env.pwd);
     io::stdout().flush().unwrap();
 }
 
@@ -91,44 +87,60 @@ fn run_command(command: Command, env: &mut Environment) {
 }
 
 fn try_exec(command: Command, env: &Environment) {
-    let path = env.path.clone() + "/" + &command.cmd;
-    match metadata(&path) {
-        Ok(md) => {
+    if let Some(path) = env.path.split(":").find_map(|p| {
+        let filepath = p.to_owned() + "/" + &command.cmd;
+        metadata(&filepath).ok().map(|md| {
             if !md.is_file() {
-                eprintln!("{} isn't a file!", path);
-                return;
+                return None;
+            } else {
+                Some(String::from(filepath))
             }
-
-            fork_exec(path, command, env);
-
-            
-        },
-        Err(err) => eprintln!("command not found: {}", path),
+        })
+    }) {
+        fork_exec(path.unwrap(), command, env);
+    } else {
+        eprintln!("command not found: {}", command.cmd);
     }
+}
+
+fn get_environment_for_exec(env: &Environment) -> Vec<CString> {
+    vec![
+        "PWD=".to_owned() + &env.pwd,
+        "HOME=".to_owned() + &env.home,
+        "USER=".to_owned() + &env.user,
+        "PATH=".to_owned() + &env.path,
+    ]
+    .iter()
+    .map(|a| CString::new(a.clone()).unwrap())
+    .collect()
 }
 
 fn fork_exec(path: String, command: Command, env: &Environment) {
     let path_c = CString::new(path).unwrap();
-    let argv_c: Vec<CString> = command.args.iter().map(|a| CString::new(a.clone()).unwrap()).collect();
-    let env_c: Vec<CString> = vec![];
+    let argv_c: Vec<CString> = command
+        .args
+        .iter()
+        .map(|a| CString::new(a.clone()).unwrap())
+        .collect();
+    let env_c = get_environment_for_exec(env);
 
     unsafe {
         match fork() {
             Ok(ForkResult::Parent { child, .. }) => {
-                nix::sys::wait::waitpid(child, Some(WaitPidFlag::empty()));
+                nix::sys::wait::waitpid(child, Some(WaitPidFlag::empty()))
+                    .expect("Error executing waitpid");
             }
-            Ok(ForkResult::Child) => { execve(&path_c, &argv_c[..], &env_c[..]); },
-            Err(e) => eprintln!("Fork failed"),
+            Ok(ForkResult::Child) => {
+                execve(&path_c, &argv_c[..], &env_c[..]).expect("evecve failed");
+            }
+            Err(e) => eprintln!("Fork failed: {}", e),
         }
     }
-
-    
 }
 
 fn run_pwd(_command: Command, env: &Environment) {
     println!("{}", env.pwd);
 }
-
 
 fn run_cd(command: Command, env: &mut Environment) {
     let path = command.args.get(1).unwrap_or(&env.home).clone();
@@ -136,21 +148,19 @@ fn run_cd(command: Command, env: &mut Environment) {
         Ok(md) => {
             if md.is_dir() {
                 env.pwd = path;
-            }
-            else {
+            } else {
                 eprintln!("{} is not a directory!", path);
             }
-        },
+        }
         Err(err) => eprintln!("{}: {}", path, err),
     }
 }
-
 
 fn run_whoami(_command: Command, env: &Environment) {
     println!("{}", env.user);
 }
 
-fn run_exit(_command: Command, env: &Environment) {
+fn run_exit(_command: Command, _env: &Environment) {
     println!("Thanks for using TomSH");
     println!("Your kernel is going to panic now as it doesn't like it when your init proces exits");
     std::process::exit(0);
