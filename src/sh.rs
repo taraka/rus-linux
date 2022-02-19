@@ -103,6 +103,7 @@ fn get_environment_for_exec(env: &Environment) -> Vec<CString> {
         "HOME=".to_owned() + &env.home.to_str().unwrap(),
         "USER=".to_owned() + &env.user,
         "PATH=".to_owned() + &env.path,
+        "RUST_BACKTRACE=1".to_owned(),
     ]
     .iter()
     .map(|a| CString::new(a.clone()).unwrap())
@@ -126,8 +127,6 @@ fn fork_exec(path: String, command: Command, env: &Environment) {
                     .expect("Error executing waitpid");
             }
             Ok(ForkResult::Child) => {
-                println!("{:?} {:?} {:?}", &path_c, &argv_c[..], &env_c[..]);
-
                 execve(&path_c, &argv_c[..], &env_c[..]).expect("evecve failed");
             }
             Err(e) => eprintln!("Fork failed: {}", e),

@@ -21,3 +21,7 @@ path = "src/ls.rs"
 [[bin]]
 name = "cat"
 path = "src/cat.rs"
+
+[[bin]]
+name = "init"
+path = "src/init.rs"
